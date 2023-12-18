@@ -1,1 +1,3 @@
-darktide_ws_pluginw64.dll
+x64/
+packages/
+.vs/
