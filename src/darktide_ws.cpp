@@ -7,13 +7,14 @@
 
 #include "PluginApi128.h"
 #include "lua.h"
-using namespace std;
-using namespace web;
-using namespace web::websockets::client;
 
 #include <iostream>
 #include <websocketpp/client.hpp>
 #include <websocketpp/config/asio_client.hpp>
+
+using namespace std;
+using namespace web;
+using namespace web::websockets::client;
 
 typedef websocketpp::client<websocketpp::config::asio_tls_client> client;
 typedef std::shared_ptr<boost::asio::ssl::context> context_ptr;
@@ -38,7 +39,8 @@ void on_message(client *c, websocketpp::connection_hdl hdl, message_ptr msg) {
 
   websocketpp::lib::error_code ec;
 
-  c->send(hdl, msg->get_payload(), msg->get_opcode(), ec);
+  // Echo
+  //c->send(hdl, msg->get_payload(), msg->get_opcode(), ec);
   if (ec) {
     logger->info(get_name(), ec.message().c_str());
   }
@@ -92,9 +94,6 @@ int setup_ws() {
     // Note that connect here only requests a connection. No network messages
     // are exchanged until the event loop starts running 
     c.connect(con);
-
-    // c.send(con, "hello", websocketpp::frame::opcode::text, ec);
-
   } catch (websocketpp::exception const &e) {
     logger->info(get_name(), e.what());
   }
@@ -115,7 +114,25 @@ static void loaded(GetApiFunction get_engine_api) {
   // MessageBoxA(NULL, "loaded", "loaded", 0);
 }
 
+
+float next_heartbeat = 0;
+
 static void update(float dt) {
+
+	next_heartbeat -= dt;
+
+	if (next_heartbeat < 0) {
+		next_heartbeat = 55;
+
+		logger->info(get_name(), "Doki");
+		websocketpp::lib::error_code ec;
+		c.send(con, "{\"type\":\"doki\"}", websocketpp::frame::opcode::text, ec);
+
+		if (ec) {
+			logger->info(get_name(), ec.message().c_str());
+		}
+	}
+
   c.poll_one();
   //   MessageBoxA(NULL, "update", "update", 0);
 }
