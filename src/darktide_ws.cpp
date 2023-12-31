@@ -1,5 +1,9 @@
 
 #include <cpprest/ws_client.h>
+#include <cpprest/json.h>
+#include <cpprest/asyncrt_utils.h>
+#include <AtlBase.h>
+#include <atlconv.h>
 #include <Windows.h>
 #include <ctime>
 #include <iostream>
@@ -7,6 +11,8 @@
 
 #include "PluginApi128.h"
 #include "lua.h"
+#include "lauxlib.h"
+#include "lualib.h"
 
 #include <iostream>
 #include <websocketpp/client.hpp>
@@ -14,6 +20,7 @@
 
 using namespace std;
 using namespace web;
+using namespace utility;
 using namespace web::websockets::client;
 
 typedef websocketpp::client<websocketpp::config::asio_tls_client> client;
@@ -35,15 +42,13 @@ static const char *get_name() { return "Darktide Websockets"; }
 typedef websocketpp::config::asio_client::message_type::ptr message_ptr;
 
 void on_message(client *c, websocketpp::connection_hdl hdl, message_ptr msg) {
-  logger->info(get_name(), msg->get_payload().c_str());
+  std::string message = msg->get_payload().c_str();
+  logger->info(get_name(), message.c_str());
 
-  websocketpp::lib::error_code ec;
-
-  // Echo
-  //c->send(hdl, msg->get_payload(), msg->get_opcode(), ec);
-  if (ec) {
-    logger->info(get_name(), ec.message().c_str());
-  }
+  lua_State* L = lua->getscriptenvironmentstate();
+  lua->getfield(L, LUA_GLOBALSINDEX, "_darktide_ws_callback"); // get global function
+  lua->pushstring(L, message.c_str()); // push 1st argument
+  lua->call(L, 1, 0); // call with 1 arg, 0 results
 }
 
 static context_ptr on_tls_init() {
@@ -101,11 +106,75 @@ int setup_ws() {
   return 1;
 }
 
+static int l_join_room(lua_State* L) {
+	if (lua->isstring(L, 1)) {
+		std::string room = lua->tolstring(L, 1, nullptr);
+
+		CA2W ca2w(room.c_str());
+		wstring room_wstr = ca2w;
+
+		json::value message_json = json::value::object();
+		message_json[L"type"] = json::value::string(U("join"));
+		message_json[L"room"] = json::value::string(room_wstr);
+
+
+		std::string message = utility::conversions::to_utf8string(message_json.serialize());
+
+		websocketpp::lib::error_code ec;
+		c.send(con, message, websocketpp::frame::opcode::text, ec);
+
+		if (ec) {
+			logger->info(get_name(), ec.message().c_str());
+		}
+
+		lua->pushboolean(L, 1);  // success
+	}
+	else {
+		lua->pushboolean(L, 0);  // error
+	}
+	return 1;
+}
+
+static int l_send_message(lua_State* L) {
+	if (lua->isstring(L, 1)) {
+		std::string data = lua->tolstring(L, 1, nullptr);
+
+		CA2W ca2w(data.c_str());
+		wstring data_wstr = ca2w;
+
+		json::value message_json = json::value::object();
+		message_json[L"type"] = json::value::string(U("data"));
+		message_json[L"data"] = json::value::string(data_wstr);
+
+
+		std::string message = utility::conversions::to_utf8string(message_json.serialize());
+
+		websocketpp::lib::error_code ec;
+		c.send(con, message, websocketpp::frame::opcode::text, ec);
+
+		if (ec) {
+			logger->info(get_name(), ec.message().c_str());
+		}
+
+		lua->pushboolean(L, 1);  // success
+	}
+	else {
+		lua->pushboolean(L, 0);  // error
+	}
+	return 1;
+}
+
+
 static void setup_game(GetApiFunction get_engine_api) {
   lua = (LuaApi128 *)get_engine_api(LUA_API_ID);
   logger = (LoggingApi *)get_engine_api(LOGGING_API_ID);
 
   setup_ws();
+
+
+  lua->set_module_number("DarktideWs", "VERSION", 1);
+  lua->add_module_function("DarktideWs", "join_room", l_join_room);
+  lua->add_module_function("DarktideWs", "send_message", l_send_message);
 
   // MessageBoxA(NULL, "setup_game", "setup_game", 0);
 }
