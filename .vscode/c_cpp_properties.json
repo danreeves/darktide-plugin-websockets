@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/lib/**",
-                "C:\\msys64\\mingw64\\include"
+                "C:\\msys64\\mingw64\\include",
+                "${workspaceFolder}/src"
             ],
             "defines": [
                 "_DEBUG",
