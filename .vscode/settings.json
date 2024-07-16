@@ -1,0 +1,12 @@
+{
+	"files.associations": {
+		"string": "cpp",
+		"ostream": "cpp",
+		"system_error": "cpp",
+		"*.ipp": "cpp",
+		"any": "cpp",
+		"optional": "cpp",
+		"variant": "cpp",
+		"functional": "cpp"
+	}
+}
