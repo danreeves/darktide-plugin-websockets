@@ -1,5 +1,5 @@
 /** Compile with:
-gcc -Ilib -Isrc -I"C:\msys64\mingw64\include" -L"C:\msys64\mingw64\lib" -shared -o darktide_ws_plugin64.dll .\src\plugin.cpp -lstdc++ -lwsock32 -lssl -lcrypto --std=c++11 -lws2_32 -s
+gcc -Ilib -Isrc -I"C:\msys64\mingw64\include" -L"C:\msys64\mingw64\lib" -shared -o darktide_ws_pluginw64.dll .\src\plugin.cpp -lstdc++ -lwsock32 -lssl -lcrypto --std=c++11 -lws2_32 -s
 */
 #include <winsock2.h>
 #include <Windows.h>
