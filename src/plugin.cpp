@@ -13,6 +13,7 @@ gcc -Ilib -Isrc -I"C:\msys64\mingw64\include" -L"C:\msys64\mingw64\lib" -shared 
 #include <json.hpp>
 #include <lua/lauxlib.h>
 #include <string_format.cpp>
+#include <script.lua.h>
 
 using namespace std;
 
@@ -40,12 +41,12 @@ void on_message(client *c, websocketpp::connection_hdl hdl, message_ptr msg)
 	logger->info(get_name(), message.c_str());
 
 	lua_State *L = lua->getscriptenvironmentstate();
-	lua->getfield(L, LUA_GLOBALSINDEX, "_darktide_ws_callback"); // get global function
+	lua->getfield(L, LUA_GLOBALSINDEX, "_darktide_ws_plugin_on_message"); // get global function
 
 	const char *type = lua->lua_typename(L, 0);
 	if (type != "function")
 	{
-		logger->info(get_name(), string_format("_darktide_ws_callback not defined or not callable (%s)", type).c_str());
+		logger->info(get_name(), string_format("_darktide_ws_plugin_on_message not defined or not callable (%s)", type).c_str());
 		return;
 	}
 
@@ -212,6 +213,18 @@ static void setup_game(GetApiFunction get_engine_api)
 	lua->set_module_number("DarktideWs", "VERSION", 1);
 	lua->add_module_function("DarktideWs", "join_room", l_join_room);
 	lua->add_module_function("DarktideWs", "send_message", l_send_message);
+
+	lua_State *L = lua->getscriptenvironmentstate();
+	int result = lua->lib_loadstring(L, script);
+
+	if (result == 0)
+	{
+		logger->error(get_name(), "loadstring failed");
+	}
+	else
+	{
+		logger->info(get_name(), "loadstring worked?");
+	}
 
 	// logger->info(get_name(), "setup_game");
 	// MessageBoxA(NULL, "setup_game!!!!!!!!!!", "setup_game", 0);
