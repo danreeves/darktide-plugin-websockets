@@ -1,22 +1,15 @@
 #include <winsock2.h>
-#include <Windows.h>
-#include <ctime>
-#include <iostream>
-#include <sstream>
 #include <websocketpp/client.hpp>
 #include <websocketpp/config/asio_client.hpp>
 #include <map>
 
 #include <PluginApi128.h>
-#include <json.hpp>
 #include <lua/lua.hpp>
 #include <string_format.cpp>
-#include "bits/unique_ptr.h"
+#include <starts_with.cpp>
 // #include <script.lua.h>
 
 using namespace std;
-
-using json = nlohmann::json;
 
 using websocketpp::lib::bind;
 using websocketpp::lib::placeholders::_1;
@@ -94,11 +87,6 @@ void on_close(websocketpp::connection_hdl hdl)
 	logger->info(get_name(), "Websocket connection closed");
 }
 
-static bool starts_with(const std::string str, const std::string prefix)
-{
-	return ((prefix.size() <= str.size()) && std::equal(prefix.begin(), prefix.end(), str.begin()));
-}
-
 static int pushHandle(lua_State *L, websocketpp::connection_hdl hdl)
 {
 	hdls.push_back(hdl);
@@ -106,7 +94,7 @@ static int pushHandle(lua_State *L, websocketpp::connection_hdl hdl)
 
 	int *ud = (int *)lua->newuserdata(L, sizeof(int));
 	*ud = curr_size;
-	lua->lib_newmetatable(L, "ConnectionHandle");
+	lua->lib_newmetatable(L, "WebSocket");
 	lua->setmetatable(L, -2);
 	return 1;
 }
@@ -194,13 +182,6 @@ static int l_connect(lua_State *L)
 		return 1;
 	}
 
-	// lua->createtable(L, 0, 1);
-	// lua_pushcfunction(L, l_sin);
-	// lua->setfield(L, -2, "field1");
-	// lua->pushcclosure(L, l_sin, 1);
-	// lua->setfield(L, -1, "send");
-	// lua->settable(L, -1);
-	// lua->pushboolean(L, 1);
 	return 0;
 }
 
@@ -208,92 +189,140 @@ static websocketpp::connection_hdl toHandle(lua_State *L, int index)
 {
 	int *hdls_idx = (int *)lua->touserdata(L, index);
 	websocketpp::connection_hdl handle = hdls[*hdls_idx];
-	// if (handle == NULL)
-	// lua->lib_typerror(L, index, "ConnectionHandle");
 	return handle;
 }
 
-static const luaL_Reg ConnectionHandle_methods[] = {
-	{"connect", l_connect},
-	{0, 0}};
-
-static int ConnectionHandle_gc(lua_State *L)
+static int WebSocket_gc(lua_State *L)
 {
 	websocketpp::connection_hdl hdl = toHandle(L, 1);
 	logger->info(get_name(), "connection gced");
+	// TODO: Disconnect it
 	return 0;
 }
 
-static int ConnectionHandle_tostring(lua_State *L)
+static int WebSocket_tostring(lua_State *L)
 {
 	websocketpp::connection_hdl hdl = toHandle(L, 1);
-	// lua->pushfstring(L, "Connection to: %p", connections[hdl].uri);
-	lua->pushfstring(L, "Connection to: %p", "blahhh");
+	lua->pushstring(L, string_format("[WebSocket: %s]", connections[hdl].uri.c_str()).c_str());
 	return 1;
 }
 
-static const luaL_Reg ConnectionHandle_meta[] = {
-	{"__gc", ConnectionHandle_gc},
-	{"__tostring", ConnectionHandle_tostring},
-	{0, 0}};
-
-int ConnectionHandle_register(lua_State *L)
+// TODO: Queue sends before is_connected
+static int WebSocket_send_message(lua_State *L)
 {
-	lua->lib_openlib(L, "ConnectionHandle", ConnectionHandle_methods, 0); /* create methods table,
-												 add it to the globals */
-	lua->lib_newmetatable(L, "ConnectionHandle");						  /* create metatable for Image,
-															 add it to the Lua registry */
-	lua->lib_openlib(L, 0, ConnectionHandle_meta, 0);					  /* fill metatable */
-	lua->pushstring(L, "__index");
-	lua->pushvalue(L, -3); /* dup methods table*/
-	lua->rawset(L, -3);	   /* metatable.__index = methods */
-	lua->pushstring(L, "__metatable");
-	lua->pushvalue(L, -3); /* dup methods table*/
-	lua->rawset(L, -3);	   /* hide metatable:
-							  metatable.__metatable = methods */
-	lua->pop(L);		   /* drop metatable */
-	return 1;			   /* return methods on the stack */
+	websocketpp::connection_hdl hdl = toHandle(L, 1);
+
+	if (!connections[hdl].is_connected)
+	{
+
+		logger->info(get_name(), "Can't send, not connected");
+		lua->pushboolean(L, 0); // error
+		return 1;
+	}
+
+	if (lua->isstring(L, 2))
+	{
+		std::string message = lua->tolstring(L, 2, nullptr);
+
+		websocketpp::lib::error_code ec;
+
+		if (starts_with(connections[hdl].uri, "wss://"))
+		{
+			auto con = secure_client.get_con_from_hdl(hdl);
+			secure_client.send(con, message, websocketpp::frame::opcode::text, ec);
+		}
+		else
+		{
+
+			auto con = insecure_client.get_con_from_hdl(hdl);
+			insecure_client.send(con, message, websocketpp::frame::opcode::text, ec);
+		}
+
+		if (ec)
+		{
+			logger->info(get_name(), ec.message().c_str());
+		}
+
+		lua->pushboolean(L, 1); // success
+		return 1;
+	}
+	else
+	{
+		lua->pushboolean(L, 0); // error
+		return 1;
+	}
 }
 
-// static int l_send_message(lua_State *L)
-// {
-// 	void *handle = lua->touserdata(L, 1);
-// 	secure_client.get_con_from_hdl(*handle);
+// TODO: add meta to close but actually close in update loop
+// 		 block sending while queued to close
+static int WebSocket_close(lua_State *L)
+{
+	websocketpp::connection_hdl hdl = toHandle(L, 1);
 
-// 	if (!is_connected)
-// 	{
+	if (starts_with(connections[hdl].uri, "wss://"))
+	{
+		auto con = secure_client.get_con_from_hdl(hdl);
 
-// 		logger->info(get_name(), "Can't send, not connected");
-// 		lua->pushboolean(L, 0); // error
-// 		return 1;
-// 	}
+		websocketpp::lib::error_code ec;
+		secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
 
-// 	if (lua->isstring(L, 1))
-// 	{
-// 		std::string data = lua->tolstring(L, 1, nullptr);
+		if (ec)
+		{
+			logger->info(get_name(), ec.message().c_str());
+		}
+	}
+	else
+	{
+		auto con = insecure_client.get_con_from_hdl(hdl);
 
-// 		json message_json = {
-// 			{"type", "data"},
-// 			{"data", data},
-// 		};
-// 		std::string message = message_json.dump();
+		websocketpp::lib::error_code ec;
+		insecure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
 
-// 		websocketpp::lib::error_code ec;
-// 		c.send(con, message, websocketpp::frame::opcode::text, ec);
+		if (ec)
+		{
+			logger->info(get_name(), ec.message().c_str());
+		}
+	}
 
-// 		if (ec)
-// 		{
-// 			logger->info(get_name(), ec.message().c_str());
-// 		}
+	connections[hdl].is_connected = false;
 
-// 		lua->pushboolean(L, 1); // success
-// 	}
-// 	else
-// 	{
-// 		lua->pushboolean(L, 0); // error
-// 	}
-// 	return 1;
-// }
+	return 1;
+}
+
+static const luaL_Reg WebSockets_methods[] = {
+	{"connect", l_connect},
+	{0, 0}};
+
+static const luaL_Reg WebSocket_meta[] = {
+	{"__gc", WebSocket_gc},
+	{"__tostring", WebSocket_tostring},
+	{"send", WebSocket_send_message},
+	{"close", WebSocket_close},
+	{0, 0}};
+
+int WebSocket_register(lua_State *L)
+{
+	// create methods table
+	lua->lib_openlib(L, "WebSockets", WebSockets_methods, 0);
+
+	// create meta table for WebSocket
+	lua->lib_newmetatable(L, "WebSocket");
+	lua->lib_openlib(L, 0, WebSocket_meta, 0); /* fill metatable */
+
+	// set WebSocket.__index = WebSocket
+	lua->pushstring(L, "__index");
+	lua->pushvalue(L, -2);
+	lua->rawset(L, -3);
+
+	// set WebSocket.__metatable = WebSocket
+	lua->pushstring(L, "__metatable");
+	lua->pushvalue(L, -2);
+	lua->rawset(L, -3);
+
+	lua->pop(L);
+	lua->pop(L);
+	return 0;
+}
 
 static void setup_game(GetApiFunction get_engine_api)
 {
@@ -315,12 +344,8 @@ static void setup_game(GetApiFunction get_engine_api)
 	insecure_client.set_open_handler(bind(&on_open, ::_1));
 	insecure_client.set_close_handler(bind(&on_close, ::_1));
 
-	// lua->set_module_number("WebSockets", "VERSION", 1);
-	// lua->add_module_function("WebSockets", "connect", l_connect);
-	// lua->add_module_function("WebSockets", "send", l_send);
-
 	lua_State *L = lua->getscriptenvironmentstate();
-	ConnectionHandle_register(L);
+	WebSocket_register(L);
 }
 
 static void loaded(GetApiFunction get_engine_api)
@@ -355,7 +380,6 @@ static void shutdown()
 				logger->info(get_name(), ec.message().c_str());
 			}
 		}
-
 		else
 		{
 			auto con = insecure_client.get_con_from_hdl(hdl);
@@ -379,7 +403,6 @@ extern "C"
 	{
 		if (api == PLUGIN_API_ID)
 		{
-			// MessageBoxA(NULL, "get_dynamic_plugin_api!!!!!", "get_dynamic_plugin_api", 0);
 			static PluginApi128 api{};
 			api.get_name = get_name;
 			api.setup_game = setup_game;
@@ -393,7 +416,6 @@ extern "C"
 
 	__declspec(dllexport) void *get_plugin_api(unsigned api)
 	{
-		//   MessageBoxA(NULL, "get_plugin_api base!!!!!", "get_plugin_api", 0);
 		return get_dynamic_plugin_api(api);
 	}
 }
