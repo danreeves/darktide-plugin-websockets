@@ -22,7 +22,9 @@ struct ConnectionMeta
 {
 	std::string uri;
 	bool is_connected;
+	int on_connect_callback;
 	int on_message_callback;
+	int on_close_callback;
 };
 
 websocketpp::client<websocketpp::config::asio_tls_client> secure_client;
@@ -79,12 +81,34 @@ void on_open(websocketpp::connection_hdl hdl)
 {
 	connections[hdl].is_connected = true;
 	logger->info(get_name(), "Websocket connection open");
+	auto it = connections.find(hdl);
+	if (it == connections.end())
+	{
+		logger->info(get_name(), "Message received on connection but no handler");
+	}
+	else
+	{
+		lua_State *L = lua->getscriptenvironmentstate();
+		lua->rawgeti(L, LUA_REGISTRYINDEX, connections[hdl].on_connect_callback);
+		lua->call(L, 0, 0);
+	}
 }
 
 void on_close(websocketpp::connection_hdl hdl)
 {
 	connections[hdl].is_connected = false;
 	logger->info(get_name(), "Websocket connection closed");
+	auto it = connections.find(hdl);
+	if (it == connections.end())
+	{
+		logger->info(get_name(), "Message received on connection but no handler");
+	}
+	else
+	{
+		lua_State *L = lua->getscriptenvironmentstate();
+		lua->rawgeti(L, LUA_REGISTRYINDEX, connections[hdl].on_close_callback);
+		lua->call(L, 0, 0);
+	}
 }
 
 static int pushHandle(lua_State *L, websocketpp::connection_hdl hdl)
@@ -119,9 +143,27 @@ static int l_connect(lua_State *L)
 		return 1;
 	}
 
+	if (lua->type(L, 3) != LUA_TFUNCTION)
+	{
+		logger->error(get_name(), string_format("connect: second argument is not a function (%s)", arg_2_type).c_str());
+		lua->pushboolean(L, 0); // error
+		return 1;
+	}
+
+	if (lua->type(L, 4) != LUA_TFUNCTION)
+	{
+		logger->error(get_name(), string_format("connect: second argument is not a function (%s)", arg_2_type).c_str());
+		lua->pushboolean(L, 0); // error
+		return 1;
+	}
+
 	std::string uri = lua->tolstring(L, 1, nullptr);
 	lua->pushvalue(L, 2);
-	int callback_reference = lua->lib_ref(L, LUA_REGISTRYINDEX);
+	int on_connect_callback = lua->lib_ref(L, LUA_REGISTRYINDEX);
+	lua->pushvalue(L, 3);
+	int on_message_callback = lua->lib_ref(L, LUA_REGISTRYINDEX);
+	lua->pushvalue(L, 4);
+	int on_close_callback = lua->lib_ref(L, LUA_REGISTRYINDEX);
 
 	try
 	{
@@ -145,7 +187,9 @@ static int l_connect(lua_State *L)
 			ConnectionMeta m{};
 			m.is_connected = false;
 			m.uri = uri;
-			m.on_message_callback = callback_reference;
+			m.on_connect_callback = on_connect_callback;
+			m.on_message_callback = on_message_callback;
+			m.on_close_callback = on_close_callback;
 			connections[hdl] = m;
 			pushHandle(L, hdl);
 			return 1;
@@ -169,7 +213,9 @@ static int l_connect(lua_State *L)
 			ConnectionMeta m{};
 			m.is_connected = false;
 			m.uri = uri;
-			m.on_message_callback = callback_reference;
+			m.on_connect_callback = on_connect_callback;
+			m.on_message_callback = on_message_callback;
+			m.on_close_callback = on_close_callback;
 			connections[hdl] = m;
 			pushHandle(L, connection);
 			return 1;
