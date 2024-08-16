@@ -66,7 +66,7 @@ void on_message(websocketpp::connection_hdl hdl, message_ptr msg)
 	auto it = connections.find(hdl);
 	if (it == connections.end())
 	{
-		logger->info(get_name(), "Message received on connection but no handler");
+		logger->info(get_name(), "No on_message callback found");
 	}
 	else
 	{
@@ -81,10 +81,11 @@ void on_open(websocketpp::connection_hdl hdl)
 {
 	connections[hdl].is_connected = true;
 	logger->info(get_name(), "Websocket connection open");
+
 	auto it = connections.find(hdl);
 	if (it == connections.end())
 	{
-		logger->info(get_name(), "Message received on connection but no handler");
+		logger->info(get_name(), "No on_open callback found");
 	}
 	else
 	{
@@ -98,10 +99,11 @@ void on_close(websocketpp::connection_hdl hdl)
 {
 	connections[hdl].is_connected = false;
 	logger->info(get_name(), "Websocket connection closed");
+
 	auto it = connections.find(hdl);
 	if (it == connections.end())
 	{
-		logger->info(get_name(), "Message received on connection but no handler");
+		logger->info(get_name(), "No on_close callback found");
 	}
 	else
 	{
@@ -305,6 +307,8 @@ static int WebSocket_close(lua_State *L)
 {
 	websocketpp::connection_hdl hdl = toHandle(L, 1);
 
+	connections[hdl].is_connected = false;
+
 	if (starts_with(connections[hdl].uri, "wss://"))
 	{
 		auto con = secure_client.get_con_from_hdl(hdl);
@@ -329,8 +333,6 @@ static int WebSocket_close(lua_State *L)
 			logger->info(get_name(), ec.message().c_str());
 		}
 	}
-
-	connections[hdl].is_connected = false;
 
 	return 1;
 }
