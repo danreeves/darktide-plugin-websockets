@@ -345,6 +345,7 @@ static const luaL_Reg WebSocket_meta[] = {
 	{"__gc", WebSocket_gc},
 	{"__tostring", WebSocket_tostring},
 	{"send", WebSocket_send_message},
+	// TODO: state()
 	{"close", WebSocket_close},
 	{0, 0}};
 
