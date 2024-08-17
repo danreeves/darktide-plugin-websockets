@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <websocketpp/client.hpp>
 #include <websocketpp/config/asio_client.hpp>
+#include <websocketpp/config/asio_no_tls_client.hpp>
 #include <map>
 
 #include <PluginApi128.h>
@@ -31,11 +32,14 @@ websocketpp::client<websocketpp::config::asio_tls_client> secure_client;
 websocketpp::client<websocketpp::config::asio_client> insecure_client;
 std::map<websocketpp::connection_hdl, ConnectionMeta, std::owner_less<websocketpp::connection_hdl>> connections;
 std::vector<websocketpp::connection_hdl> hdls;
+std::vector<websocketpp::connection_hdl> close_queue;
 
 static const char *get_name()
 {
 	return "darktide_ws_plugin";
 }
+
+int shutting_down = 0;
 
 static std::shared_ptr<boost::asio::ssl::context> on_tls_init()
 {
@@ -60,6 +64,9 @@ static std::shared_ptr<boost::asio::ssl::context> on_tls_init()
 typedef websocketpp::config::asio_client::message_type::ptr message_ptr;
 void on_message(websocketpp::connection_hdl hdl, message_ptr msg)
 {
+	if (shutting_down)
+		return;
+
 	std::string message = msg->get_payload().c_str();
 	logger->info(get_name(), message.c_str());
 
@@ -79,8 +86,10 @@ void on_message(websocketpp::connection_hdl hdl, message_ptr msg)
 
 void on_open(websocketpp::connection_hdl hdl)
 {
-	connections[hdl].is_connected = true;
 	logger->info(get_name(), "Websocket connection open");
+
+	if (shutting_down)
+		return;
 
 	auto it = connections.find(hdl);
 	if (it == connections.end())
@@ -89,6 +98,8 @@ void on_open(websocketpp::connection_hdl hdl)
 	}
 	else
 	{
+		connections[hdl].is_connected = true;
+
 		lua_State *L = lua->getscriptenvironmentstate();
 		lua->rawgeti(L, LUA_REGISTRYINDEX, connections[hdl].on_connect_callback);
 		lua->call(L, 0, 0);
@@ -97,8 +108,11 @@ void on_open(websocketpp::connection_hdl hdl)
 
 void on_close(websocketpp::connection_hdl hdl)
 {
-	connections[hdl].is_connected = false;
+
 	logger->info(get_name(), "Websocket connection closed");
+
+	if (shutting_down)
+		return;
 
 	auto it = connections.find(hdl);
 	if (it == connections.end())
@@ -107,6 +121,8 @@ void on_close(websocketpp::connection_hdl hdl)
 	}
 	else
 	{
+		connections[hdl].is_connected = false;
+
 		lua_State *L = lua->getscriptenvironmentstate();
 		lua->rawgeti(L, LUA_REGISTRYINDEX, connections[hdl].on_close_callback);
 		lua->call(L, 0, 0);
@@ -242,9 +258,22 @@ static websocketpp::connection_hdl toHandle(lua_State *L, int index)
 
 static int WebSocket_gc(lua_State *L)
 {
+	if (shutting_down)
+		return 0;
+
 	websocketpp::connection_hdl hdl = toHandle(L, 1);
 	logger->info(get_name(), "connection gced");
-	// TODO: Disconnect it
+
+	try
+	{
+		auto connection = connections.at(hdl);
+		connection.is_connected = false;
+		close_queue.push_back(hdl);
+	}
+	catch (std::out_of_range e)
+	{
+		logger->info(get_name(), "connection already closed");
+	}
 	return 0;
 }
 
@@ -301,39 +330,11 @@ static int WebSocket_send_message(lua_State *L)
 	}
 }
 
-// TODO: add meta to close but actually close in update loop
-// 		 block sending while queued to close
 static int WebSocket_close(lua_State *L)
 {
 	websocketpp::connection_hdl hdl = toHandle(L, 1);
-
 	connections[hdl].is_connected = false;
-
-	if (starts_with(connections[hdl].uri, "wss://"))
-	{
-		auto con = secure_client.get_con_from_hdl(hdl);
-
-		websocketpp::lib::error_code ec;
-		secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
-
-		if (ec)
-		{
-			logger->info(get_name(), ec.message().c_str());
-		}
-	}
-	else
-	{
-		auto con = insecure_client.get_con_from_hdl(hdl);
-
-		websocketpp::lib::error_code ec;
-		insecure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
-
-		if (ec)
-		{
-			logger->info(get_name(), ec.message().c_str());
-		}
-	}
-
+	close_queue.push_back(hdl);
 	return 1;
 }
 
@@ -403,26 +404,16 @@ static void loaded(GetApiFunction get_engine_api)
 
 static void update(float dt)
 {
-	for (auto const &x : connections)
+	for (auto const &hdl : close_queue)
 	{
-		secure_client.poll_one();
-		insecure_client.poll_one();
-	};
-}
 
-static void shutdown()
-{
-	for (auto const &x : connections)
-	{
-		auto hdl = x.first;
-		auto meta = x.second;
-
-		if (starts_with(meta.uri, "wss://"))
+		if (starts_with(connections[hdl].uri, "wss://"))
 		{
 			auto con = secure_client.get_con_from_hdl(hdl);
 
 			websocketpp::lib::error_code ec;
 			secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
+			secure_client.poll();
 
 			if (ec)
 			{
@@ -435,15 +426,138 @@ static void shutdown()
 
 			websocketpp::lib::error_code ec;
 			insecure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
+			insecure_client.poll();
 
 			if (ec)
 			{
 				logger->info(get_name(), ec.message().c_str());
 			}
 		}
+
+		connections.erase(hdl);
 	}
-	secure_client.poll();
-	insecure_client.poll();
+
+	close_queue.clear();
+
+	for (auto const &x : connections)
+	{
+		secure_client.poll_one();
+		insecure_client.poll_one();
+	};
+}
+
+static void shutdown()
+{
+	shutting_down = 1;
+
+	logger->info(get_name(), "Shutting down");
+
+	secure_client.stop_perpetual();
+
+	for (auto const &hdl : close_queue)
+	{
+		logger->info(get_name(), string_format("Disconnecting %s", connections[hdl].uri.c_str()).c_str());
+		if (starts_with(connections[hdl].uri, "wss://"))
+		{
+			auto con = secure_client.get_con_from_hdl(hdl);
+
+			websocketpp::lib::error_code ec;
+			secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
+			secure_client.poll();
+
+			if (ec)
+			{
+				logger->info(get_name(), ec.message().c_str());
+			}
+		}
+		else
+		{
+			auto con = insecure_client.get_con_from_hdl(hdl);
+
+			websocketpp::lib::error_code ec;
+			insecure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
+			insecure_client.poll();
+
+			if (ec)
+			{
+				logger->info(get_name(), ec.message().c_str());
+			}
+		}
+
+		connections.erase(hdl);
+	}
+
+	close_queue.clear();
+
+	for (auto const &x : connections)
+	{
+		auto hdl = x.first;
+		auto meta = x.second;
+
+		logger->info(get_name(), string_format("Disconnecting %s", meta.uri.c_str()).c_str());
+
+		if (starts_with(meta.uri, "wss://"))
+		{
+			auto con = secure_client.get_con_from_hdl(hdl);
+
+			websocketpp::lib::error_code ec;
+			secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
+			secure_client.poll();
+
+			if (ec)
+			{
+				logger->info(get_name(), string_format("error closing secure con (%s)", ec.message().c_str()).c_str());
+			}
+
+			con = nullptr;
+		}
+		else
+		{
+			auto con = insecure_client.get_con_from_hdl(hdl);
+
+			websocketpp::lib::error_code ec;
+			insecure_client.close(hdl, websocketpp::close::status::going_away, "closing", ec);
+			insecure_client.poll();
+
+			if (ec)
+			{
+				logger->info(get_name(), string_format("error closing insecure con (%s)", ec.message().c_str()).c_str());
+			}
+
+			con = nullptr;
+		}
+	}
+
+	connections.clear();
+	hdls.clear();
+
+	secure_client.run();
+	insecure_client.run();
+
+	auto insecure_io = &insecure_client.get_io_service();
+	insecure_io->stop();
+
+	try
+	{
+		secure_client.stop();
+	}
+	catch (const std::exception &e)
+	{
+		logger->info(get_name(), string_format("secure_client stop exception: %s", e.what()).c_str());
+	}
+	try
+	{
+		insecure_client.stop();
+	}
+	catch (const std::exception &e)
+	{
+		logger->info(get_name(), string_format("insecure_client stop exception: %s", e.what()).c_str());
+	}
+
+	secure_client.reset();
+	insecure_client.reset();
+
+	logger->info(get_name(), "Shutdown complete");
 }
 
 extern "C"
