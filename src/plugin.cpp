@@ -452,7 +452,32 @@ static void shutdown()
 
 	logger->info(get_name(), "Shutting down");
 
-	secure_client.stop_perpetual();
+	try
+	{
+		secure_client.stop_perpetual();
+		insecure_client.stop_perpetual();
+	}
+	catch (websocketpp::exception const &e)
+	{
+		logger->info(get_name(), string_format("error stopping perpetual (%s)", e.what()).c_str());
+	}
+
+	try
+	{
+
+		if (secure_client.is_listening())
+		{
+			secure_client.stop_listening();
+		}
+		if (insecure_client.is_listening())
+		{
+			insecure_client.stop_listening();
+		}
+	}
+	catch (websocketpp::exception const &e)
+	{
+		logger->info(get_name(), string_format("error stopping listening (%s)", e.what()).c_str());
+	}
 
 	for (auto const &hdl : close_queue)
 	{
@@ -463,12 +488,14 @@ static void shutdown()
 
 			websocketpp::lib::error_code ec;
 			secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
-			secure_client.poll();
+			secure_client.run();
 
 			if (ec)
 			{
 				logger->info(get_name(), ec.message().c_str());
 			}
+
+			con = nullptr;
 		}
 		else
 		{
@@ -476,12 +503,14 @@ static void shutdown()
 
 			websocketpp::lib::error_code ec;
 			insecure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
-			insecure_client.poll();
+			insecure_client.run();
 
 			if (ec)
 			{
 				logger->info(get_name(), ec.message().c_str());
 			}
+
+			con = nullptr;
 		}
 
 		connections.erase(hdl);
@@ -502,7 +531,7 @@ static void shutdown()
 
 			websocketpp::lib::error_code ec;
 			secure_client.close(con, websocketpp::close::status::going_away, "closing", ec);
-			secure_client.poll();
+			secure_client.run();
 
 			if (ec)
 			{
@@ -517,7 +546,7 @@ static void shutdown()
 
 			websocketpp::lib::error_code ec;
 			insecure_client.close(hdl, websocketpp::close::status::going_away, "closing", ec);
-			insecure_client.poll();
+			insecure_client.run();
 
 			if (ec)
 			{
@@ -534,30 +563,23 @@ static void shutdown()
 	secure_client.run();
 	insecure_client.run();
 
-	auto insecure_io = &insecure_client.get_io_service();
-	insecure_io->stop();
-
-	try
+	if (!secure_client.stopped())
 	{
+		logger->info(get_name(), "secure client NOT stopped");
 		secure_client.stop();
 	}
-	catch (const std::exception &e)
+
+	if (!insecure_client.stopped())
 	{
-		logger->info(get_name(), string_format("secure_client stop exception: %s", e.what()).c_str());
-	}
-	try
-	{
+		logger->info(get_name(), "insecure client NOT stopped");
 		insecure_client.stop();
 	}
-	catch (const std::exception &e)
-	{
-		logger->info(get_name(), string_format("insecure_client stop exception: %s", e.what()).c_str());
-	}
-
-	secure_client.reset();
-	insecure_client.reset();
 
 	logger->info(get_name(), "Shutdown complete");
+
+	// TODO: for some reason the process doesn't exit, can't figure it out
+	// Boom
+	exit(0);
 }
 
 extern "C"
