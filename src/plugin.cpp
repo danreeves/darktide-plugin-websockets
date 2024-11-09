@@ -8,7 +8,6 @@
 #include <lua/lua.hpp>
 #include <string_format.cpp>
 #include <starts_with.cpp>
-// #include <script.lua.h>
 
 using namespace std;
 

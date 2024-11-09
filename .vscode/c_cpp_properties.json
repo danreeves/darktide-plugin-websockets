@@ -6,6 +6,7 @@
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/lib/**",
                 "C:\\msys64\\mingw64\\include",
+                "C:\\msys64\\mingw64\\lib",
                 "${workspaceFolder}/src"
             ],
             "defines": [

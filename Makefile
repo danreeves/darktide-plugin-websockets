@@ -5,7 +5,7 @@ CC = gcc
 CFLAGS = -Ilib -Isrc -I"C:/msys64/mingw64/include" --std=c++11 -s
 
 # Linker flags
-LDFLAGS = -L"C:/msys64/mingw64/lib" -lstdc++ -lwsock32 -lssl -lcrypto -lws2_32
+LDFLAGS = -L"C:/msys64/mingw64/lib" -lstdc++ -lssl -lcrypto -lcrypt32 -lwsock32 -lws2_32 -lgdi32 -static
 
 # Target
 TARGET = darktide_ws_plugin.dll
