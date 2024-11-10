@@ -3,3 +3,10 @@ packages/
 .vs/
 darktide_ws_plugin.dll
 src/script.lua.h
+.envrc
+/target
+/msvc
+/tools/xwin
+/.xwin-cache
+/.wineprefix
+/target

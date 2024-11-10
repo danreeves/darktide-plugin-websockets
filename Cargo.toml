@@ -1,0 +1,25 @@
+[package]
+name = "dt-plugin-template"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2.162"
+
+[build-dependencies]
+bindgen = "0.70.1"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[profile.release]
+strip = "debuginfo"
+
+# The MSVC toolchain cannot handle LTO properly. Some symbol related to
+# panic unwind would always be missing.
+# So we use a separate profile for when we can compile with LTO.
+[profile.release-lto]
+inherits = "release"
+lto = true
