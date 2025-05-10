@@ -7,7 +7,7 @@ mod stingray_sdk;
 use plugin::Plugin;
 use stingray_sdk::{GetApiFunction, PluginApi, PluginApiID};
 
-pub const PLUGIN_NAME: &str = "TestingRustPlugin";
+pub const PLUGIN_NAME: &str = "WebSocketsPlugin";
 
 static PLUGIN: OnceLock<Plugin> = OnceLock::new();
 

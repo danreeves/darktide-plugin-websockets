@@ -6,9 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "0.2.162"
+tokio = "1.41.1"
+tokio-tungstenite = { version = "0.24.0", features = ["native-tls"] }
 
 [build-dependencies]
+libc = "0.2.162"
 bindgen = "0.70.1"
 
 [lib]

@@ -107,6 +107,8 @@ impl LoggingApi {
     }
 }
 
+pub const LUA_REGISTRYINDEX: i32 = -10000;
+
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LuaType {
@@ -169,7 +171,6 @@ pub struct LuaApi {
     newuserdata: unsafe extern "C" fn(*mut lua_State, usize) -> *mut c_void,
     lib_newmetatable: unsafe extern "C" fn(*mut lua_State, *const c_char) -> i32,
     setmetatable: unsafe extern "C" fn(*mut lua_State, i32) -> i32,
-    lua_typename: unsafe extern "C" fn(*mut lua_State, i32) -> *const c_char,
     lua_type: unsafe extern "C" fn(*mut lua_State, i32) -> i32,
     pushboolean: unsafe extern "C" fn(*mut lua_State, i32),
     pushvalue: unsafe extern "C" fn(*mut lua_State, i32),
@@ -199,8 +200,7 @@ impl LuaApi {
                 newuserdata: (*api).newuserdata.unwrap_unchecked(),
                 lib_newmetatable: (*api).lib_newmetatable.unwrap_unchecked(),
                 setmetatable: (*api).setmetatable.unwrap_unchecked(),
-                lua_typename: (*api).lua_typename.unwrap_unchecked(),
-                lua_type: (*api).lua_type.unwrap_unchecked(),
+                lua_type: (*api).type_.unwrap_unchecked(),
                 pushboolean: (*api).pushboolean.unwrap_unchecked(),
                 pushvalue: (*api).pushvalue.unwrap_unchecked(),
                 touserdata: (*api).touserdata.unwrap_unchecked(),
@@ -249,16 +249,6 @@ impl LuaApi {
 
     pub fn lua_type(&self, L: *mut lua_State, idx: i32) -> LuaType {
         LuaType::from(unsafe { (self.lua_type)(L, idx) })
-    }
-
-    pub fn lua_typename(&self, L: *mut lua_State, idx: i32) -> Option<&CStr> {
-        let c = unsafe { (self.lua_typename)(L, idx) };
-
-        if c.is_null() {
-            None
-        } else {
-            Some(unsafe { CStr::from_ptr(c) })
-        }
     }
 
     pub fn getscriptenvironmentstate(&self) -> *mut lua_State {
